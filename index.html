@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Prayer Journey (Prompt-Driven)</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 24px; max-width: 880px; margin: auto; }
+  input, button { font-size: 1rem; }
+  .card { border: 1px solid #e5e7eb22; border-radius: 12px; padding: 16px; margin-top: 16px; background: #ffffff0d; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 12px; margin-top: 8px; }
+  .muted { color: #6b7280; font-size: .95rem; }
+  h1 { margin: 0 0 6px; }
+  ul { margin: .5rem 0 0 1rem; }
+  button { padding: 10px 14px; border-radius: 10px; border: 1px solid #e5e7eb33; cursor: pointer; }
+  button:disabled { opacity: 0.6; cursor: not-allowed; }
+  .btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+  code.json { display: block; white-space: pre-wrap; background: #0b1220; color: #e5e7eb; padding: 12px; border-radius: 10px; overflow-x: auto; }
+</style>
+</head>
+<body>
+  <h1>Prayer Journey</h1>
+  <p class="muted">Type any subject. The app asks the AI to generate scripture, imagery, symbolism, saints, and a prayer for that subject.</p>
+
+  <div class="row">
+    <input id="subject" placeholder="e.g., anxiety, forgiveness, grief, gratitude" />
+    <button id="go">Generate</button>
+  </div>
+
+  <div id="out"></div>
+
+<script>
+const out = document.getElementById("out");
+const btn = document.getElementById("go");
+btn.addEventListener("click", generate);
+document.getElementById("subject").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") generate();
+});
+
+async function generate() {
+  const subject = document.getElementById("subject").value.trim();
+  if (!subject) return alert("Enter a subject.");
+  setLoading(true);
+  out.innerHTML = `<div class="card">Generating “${escapeHtml(subject)}” …</div>`;
+
+  try {
+    const r = await fetch("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subject })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data?.details || data?.error || "Request failed");
+    render(data);
+  } catch (e) {
+    out.innerHTML = `<div class="card">❌ Error: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    setLoading(false);
+  }
+}
+
+function render(d) {
+  const scriptures = (d.scriptures || []).map(s => `
+    <li><strong>${escapeHtml(s.ref)}</strong> — <em>${escapeHtml(s.translation || "")}</em><br>${escapeHtml(s.text)}</li>
+  `).join("");
+
+  const saints = (d.saints || []).map(s => `
+    <li><strong>${escapeHtml(s.name)}</strong> — ${escapeHtml(s.why_relevant)} ${s.feast_day ? ` (Feast: ${escapeHtml(s.feast_day)})` : ""}</li>
+  `).join("");
+
+  const hymns = (d.extras?.hymns_or_music || []).map(h => `<li>${escapeHtml(h)}</li>`).join("");
+
+  out.innerHTML = `
+    <div class="card">
+      <h2>Subject: ${escapeHtml(d.subject || "")}</h2>
+
+      <h3>Scriptures</h3>
+      <ul>${scriptures || "<li>-</li>"}</ul>
+
+      <h3>Meditation Imagery</h3>
+      <p>${escapeHtml(d.meditation_imagery || "-")}</p>
+
+      <h3>Symbolism</h3>
+      <p><strong>Colors:</strong> ${(d.symbolism?.colors || []).map(escapeHtml).join(", ") || "-"}</p>
+      <p><strong>Numbers:</strong> ${(d.symbolism?.numbers || []).map(escapeHtml).join(", ") || "-"}</p>
+      <p><strong>Symbols:</strong> ${(d.symbolism?.symbols || []).map(escapeHtml).join(", ") || "-"}</p>
+
+      <h3>Written Prayer</h3>
+      <p id="prayer">${escapeHtml((d.written_prayers || [])[0] || "-")}</p>
+
+      <div class="btns">
+        <button onclick="readAloud('#prayer')">🔊 Read Prayer Aloud</button>
+        <button onclick="copyText('#prayer')">📋 Copy Prayer</button>
+      </div>
+
+      <h3>Saints & Figures</h3>
+      <ul>${saints || "<li>-</li>"}</ul>
+
+      <h3>Extras</h3>
+      <p><strong>Breath Prayer:</strong> ${escapeHtml(d.extras?.breath_prayer || "-")}</p>
+      <p><strong>Lectio Steps:</strong> ${(d.extras?.lectio_divina_steps || []).map(escapeHtml).join(" → ") || "-"}</p>
+      <p><strong>Artwork Suggestion:</strong> ${escapeHtml(d.extras?.artwork_suggestion || "-")}</p>
+      <p><strong>Reflection Timer:</strong> ${Number(d.extras?.reflection_timer_minutes ?? 5)} min</p>
+      <p><strong>Journal Prompt:</strong> ${escapeHtml(d.extras?.journal_prompt || "-")}</p>
+
+      ${d.safety ? `<p class="muted">${escapeHtml(d.safety)}</p>` : ""}
+
+      <h3>Raw JSON (for debugging)</h3>
+      <code class="json" id="raw">${escapeHtml(JSON.stringify(d, null, 2))}</code>
+      <div class="btns"><button onclick="copyText('#raw')">📋 Copy JSON</button></div>
+    </div>
+  `;
+}
+
+function readAloud(selector) {
+  const text = document.querySelector(selector)?.textContent || "";
+  if (!text) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 0.95; u.pitch = 1; u.volume = 1;
+  const voices = speechSynthesis.getVoices();
+  const preferred = voices.find(v => /female|samantha|victoria|en-us/i.test(v.name));
+  if (preferred) u.voice = preferred;
+  speechSynthesis.cancel(); speechSynthesis.speak(u);
+}
+
+async function copyText(selector) {
+  const el = document.querySelector(selector);
+  if (!el) return;
+  const t = el.textContent;
+  try { await navigator.clipboard.writeText(t); alert("Copied!"); }
+  catch { alert("Copy failed."); }
+}
+
+function escapeHtml(s) {
+  return String(s || "").replace(/[&<>"']/g, m => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[m]));
+}
+
+function setLoading(v) { btn.disabled = v; btn.textContent = v ? "Generating…" : "Generate"; }
+</script>
+</body>
+</html>
